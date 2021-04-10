@@ -15,12 +15,15 @@
 //
 
 #import "UTMConfiguration+Constants.h"
+#import "UTMConfiguration+Defaults.h"
 #import "UTMConfiguration+System.h"
-#import "UTMLogging.h"
+#import "UTM-Swift.h"
 
 extern const NSString *const kUTMConfigSystemKey;
 
 static const NSString *const kUTMConfigArchitectureKey = @"Architecture";
+static const NSString *const kUTMConfigCPUKey = @"CPU";
+static const NSString *const kUTMConfigCPUFlagsKey = @"CPUFlags";
 static const NSString *const kUTMConfigMemoryKey = @"Memory";
 static const NSString *const kUTMConfigCPUCountKey = @"CPUCount";
 static const NSString *const kUTMConfigTargetKey = @"Target";
@@ -57,15 +60,26 @@ static const NSString *const kUTMConfigMachinePropertiesKey = @"MachinePropertie
     // Fix issue with boot order
     NSArray<NSString *> *bootPretty = [UTMConfiguration supportedBootDevicesPretty];
     if ([bootPretty containsObject:self.systemBootDevice]) {
-        NSUInteger index = [bootPretty indexOfObject:self.systemBootDevice];
-        UTMLog(@"Fixing wrong BootDevice entry '%@', index %lu", self.systemBootDevice, index);
+        NSInteger index = [bootPretty indexOfObject:self.systemBootDevice];
         self.systemBootDevice = [UTMConfiguration supportedBootDevices][index];
+    }
+    // Default CPU
+    if ([self.rootDict[kUTMConfigSystemKey][kUTMConfigCPUKey] length] == 0) {
+        self.rootDict[kUTMConfigSystemKey][kUTMConfigCPUKey] = [UTMConfiguration defaultCPUForTarget:self.systemTarget architecture:self.systemArchitecture];
+    }
+    // Older versions hard codes properties
+    if ([self.version integerValue] < 2) {
+        NSString *machineProp = [UTMConfiguration defaultMachinePropertiesForTarget:self.systemTarget];
+        if (machineProp && self.systemMachineProperties.length == 0) {
+            self.systemMachineProperties = machineProp;
+        }
     }
 }
 
 #pragma mark - System Properties
 
 - (void)setSystemArchitecture:(NSString *)systemArchitecture {
+    [self propertyWillChange];
     self.rootDict[kUTMConfigSystemKey][kUTMConfigArchitectureKey] = systemArchitecture;
 }
 
@@ -73,7 +87,17 @@ static const NSString *const kUTMConfigMachinePropertiesKey = @"MachinePropertie
     return self.rootDict[kUTMConfigSystemKey][kUTMConfigArchitectureKey];
 }
 
+- (void)setSystemCPU:(NSString *)systemCPU {
+    [self propertyWillChange];
+    self.rootDict[kUTMConfigSystemKey][kUTMConfigCPUKey] = systemCPU;
+}
+
+- (NSString *)systemCPU {
+    return self.rootDict[kUTMConfigSystemKey][kUTMConfigCPUKey];
+}
+
 - (void)setSystemMemory:(NSNumber *)systemMemory {
+    [self propertyWillChange];
     self.rootDict[kUTMConfigSystemKey][kUTMConfigMemoryKey] = systemMemory;
 }
 
@@ -82,6 +106,7 @@ static const NSString *const kUTMConfigMachinePropertiesKey = @"MachinePropertie
 }
 
 - (void)setSystemCPUCount:(NSNumber *)systemCPUCount {
+    [self propertyWillChange];
     self.rootDict[kUTMConfigSystemKey][kUTMConfigCPUCountKey] = systemCPUCount;
 }
 
@@ -90,6 +115,7 @@ static const NSString *const kUTMConfigMachinePropertiesKey = @"MachinePropertie
 }
 
 - (void)setSystemTarget:(NSString *)systemTarget {
+    [self propertyWillChange];
     self.rootDict[kUTMConfigSystemKey][kUTMConfigTargetKey] = systemTarget;
 }
 
@@ -98,6 +124,7 @@ static const NSString *const kUTMConfigMachinePropertiesKey = @"MachinePropertie
 }
 
 - (void)setSystemBootDevice:(NSString *)systemBootDevice {
+    [self propertyWillChange];
     self.rootDict[kUTMConfigSystemKey][kUTMConfigBootDeviceKey] = systemBootDevice;
 }
 
@@ -110,6 +137,7 @@ static const NSString *const kUTMConfigMachinePropertiesKey = @"MachinePropertie
 }
 
 - (void)setSystemJitCacheSize:(NSNumber *)systemJitCacheSize {
+    [self propertyWillChange];
     self.rootDict[kUTMConfigSystemKey][kUTMConfigJitCacheSizeKey] = systemJitCacheSize;
 }
 
@@ -118,6 +146,7 @@ static const NSString *const kUTMConfigMachinePropertiesKey = @"MachinePropertie
 }
 
 - (void)setSystemForceMulticore:(BOOL)systemForceMulticore {
+    [self propertyWillChange];
     self.rootDict[kUTMConfigSystemKey][kUTMConfigForceMulticoreKey] = @(systemForceMulticore);
 }
 
@@ -126,6 +155,7 @@ static const NSString *const kUTMConfigMachinePropertiesKey = @"MachinePropertie
 }
 
 - (void)setSystemUUID:(NSString *)systemUUID {
+    [self propertyWillChange];
     self.rootDict[kUTMConfigSystemKey][kUTMConfigSystemUUIDKey] = systemUUID;
 }
 
@@ -134,45 +164,88 @@ static const NSString *const kUTMConfigMachinePropertiesKey = @"MachinePropertie
 }
 
 - (void)setSystemMachineProperties:(NSString *)systemMachineProperties {
+    [self propertyWillChange];
     self.rootDict[kUTMConfigSystemKey][kUTMConfigMachinePropertiesKey] = systemMachineProperties;
 }
 
 #pragma mark - Additional arguments array handling
 
-- (NSUInteger)countArguments {
+- (NSInteger)countArguments {
     return [self.rootDict[kUTMConfigSystemKey][kUTMConfigAddArgsKey] count];
 }
 
-- (NSUInteger)newArgument:(NSString *)argument {
+- (NSInteger)newArgument:(NSString *)argument {
     if (![self.rootDict[kUTMConfigSystemKey][kUTMConfigAddArgsKey] isKindOfClass:[NSMutableArray class]]) {
         self.rootDict[kUTMConfigSystemKey][kUTMConfigAddArgsKey] = [NSMutableArray array];
     }
-    NSUInteger index = [self countArguments];
+    [self propertyWillChange];
+    NSInteger index = [self countArguments];
     self.rootDict[kUTMConfigSystemKey][kUTMConfigAddArgsKey][index] = argument;
     
     return index;
 }
 
-- (nullable NSString *)argumentForIndex:(NSUInteger)index {
+- (nullable NSString *)argumentForIndex:(NSInteger)index {
     return self.rootDict[kUTMConfigSystemKey][kUTMConfigAddArgsKey][index];
 }
 
-- (void)updateArgumentAtIndex:(NSUInteger)index withValue:(NSString*)argument {
+- (void)updateArgumentAtIndex:(NSInteger)index withValue:(NSString*)argument {
+    [self propertyWillChange];
     self.rootDict[kUTMConfigSystemKey][kUTMConfigAddArgsKey][index] = argument;
 }
 
-- (void)moveArgumentIndex:(NSUInteger)index to:(NSUInteger)newIndex {
+- (void)moveArgumentIndex:(NSInteger)index to:(NSInteger)newIndex {
     NSString *arg = self.rootDict[kUTMConfigSystemKey][kUTMConfigAddArgsKey][index];
+    [self propertyWillChange];
     [self.rootDict[kUTMConfigSystemKey][kUTMConfigAddArgsKey] removeObjectAtIndex:index];
     [self.rootDict[kUTMConfigSystemKey][kUTMConfigAddArgsKey] insertObject:arg atIndex:newIndex];
 }
 
-- (void)removeArgumentAtIndex:(NSUInteger)index {
+- (void)removeArgumentAtIndex:(NSInteger)index {
+    [self propertyWillChange];
     [self.rootDict[kUTMConfigSystemKey][kUTMConfigAddArgsKey] removeObjectAtIndex:index];
 }
 
 - (NSArray *)systemArguments {
     return self.rootDict[kUTMConfigSystemKey][kUTMConfigAddArgsKey];
+}
+
+#pragma mark - CPU Flags
+
+- (NSArray *)systemCPUFlags {
+    return self.rootDict[kUTMConfigSystemKey][kUTMConfigCPUFlagsKey];
+}
+
+- (NSInteger)newCPUFlag:(NSString *)CPUFlag {
+    NSMutableArray<NSString *> *flags = self.rootDict[kUTMConfigSystemKey][kUTMConfigCPUFlagsKey];
+    if (![flags isKindOfClass:[NSMutableArray class]]) {
+        flags = self.rootDict[kUTMConfigSystemKey][kUTMConfigCPUFlagsKey] = [NSMutableArray array];
+    }
+    NSUInteger index = [flags indexOfObjectIdenticalTo:CPUFlag];
+    if (index != NSNotFound) {
+        return (NSInteger)index;
+    }
+    [self propertyWillChange];
+    [flags addObject:CPUFlag];
+    return flags.count - 1;
+}
+
+- (void)removeCPUFlag:(NSString *)CPUFlag {
+    NSMutableArray<NSString *> *flags = self.rootDict[kUTMConfigSystemKey][kUTMConfigCPUFlagsKey];
+    [self propertyWillChange];
+    [flags removeObject:CPUFlag];
+}
+
+#pragma mark - Computed properties
+
+- (BOOL)isTargetArchitectureMatchHost {
+#if defined(__aarch64__)
+    return [self.systemArchitecture isEqualToString:@"aarch64"];
+#elif defined(__x86_64__)
+    return [self.systemArchitecture isEqualToString:@"x86_64"];
+#else
+    return NO;
+#endif
 }
 
 @end

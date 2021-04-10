@@ -16,12 +16,14 @@
 
 #import "UTMConfiguration+Networking.h"
 #import "UTMConfigurationPortForward.h"
+#import "UTM-Swift.h"
 
 extern const NSString *const kUTMConfigNetworkingKey;
 
 static const NSString *const kUTMConfigNetworkEnabledKey = @"NetworkEnabled";
 static const NSString *const kUTMConfigNetworkIsolateGuestKey = @"IsolateGuest";
 static const NSString *const kUTMConfigNetworkCardKey = @"NetworkCard";
+static const NSString *const kUTMConfigNetworkCardMacKey = @"NetworkCardMAC";
 static const NSString *const kUTMConfigNetworkIPSubnetKey = @"IPSubnet";
 static const NSString *const kUTMConfigNetworkIPv6SubnetKey = @"IPv6Subnet";
 static const NSString *const kUTMConfigNetworkIPHostKey = @"IPHost";
@@ -55,11 +57,30 @@ static const NSString *const kUTMConfigNetworkPortForwardGuestPortKey = @"GuestP
     if (!self.rootDict[kUTMConfigNetworkingKey][kUTMConfigNetworkCardKey]) {
         self.networkCard = @"rtl8139";
     }
+    // Generate MAC if missing
+    if (!self.networkCardMac) {
+        self.networkCardMac = [self generateMacAddress];
+    }
+}
+
+#pragma mark - Generate MAC
+
+- (NSString *)generateMacAddress {
+    uint8_t bytes[6];
+    
+    for (int i = 0; i < 6; i++) {
+        bytes[i] = arc4random() % 256;
+    }
+    // byte 0 should be local
+    bytes[0] = (bytes[0] & 0xFC) | 0x2;
+    
+    return [NSString stringWithFormat:@"%02X:%02X:%02X:%02X:%02X:%02X", bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5]];
 }
 
 #pragma mark - Network settings
 
 - (void)setNetworkEnabled:(BOOL)networkEnabled {
+    [self propertyWillChange];
     self.rootDict[kUTMConfigNetworkingKey][kUTMConfigNetworkEnabledKey] = @(networkEnabled);
 }
 
@@ -68,6 +89,7 @@ static const NSString *const kUTMConfigNetworkPortForwardGuestPortKey = @"GuestP
 }
 
 - (void)setNetworkIsolate:(BOOL)networkLocalhostOnly {
+    [self propertyWillChange];
     self.rootDict[kUTMConfigNetworkingKey][kUTMConfigNetworkIsolateGuestKey] = @(networkLocalhostOnly);
 }
 
@@ -76,6 +98,7 @@ static const NSString *const kUTMConfigNetworkPortForwardGuestPortKey = @"GuestP
 }
 
 - (void)setNetworkCard:(NSString *)networkCard {
+    [self propertyWillChange];
     self.rootDict[kUTMConfigNetworkingKey][kUTMConfigNetworkCardKey] = networkCard;
 }
 
@@ -83,7 +106,17 @@ static const NSString *const kUTMConfigNetworkPortForwardGuestPortKey = @"GuestP
     return self.rootDict[kUTMConfigNetworkingKey][kUTMConfigNetworkCardKey];
 }
 
+- (void)setNetworkCardMac:(NSString *)networkCardMac {
+    [self propertyWillChange];
+    self.rootDict[kUTMConfigNetworkingKey][kUTMConfigNetworkCardMacKey] = networkCardMac;
+}
+
+- (NSString *)networkCardMac {
+    return self.rootDict[kUTMConfigNetworkingKey][kUTMConfigNetworkCardMacKey];
+}
+
 - (void)setNetworkAddress:(NSString *)networkAddress {
+    [self propertyWillChange];
     self.rootDict[kUTMConfigNetworkingKey][kUTMConfigNetworkIPSubnetKey] = networkAddress;
 }
 
@@ -92,6 +125,7 @@ static const NSString *const kUTMConfigNetworkPortForwardGuestPortKey = @"GuestP
 }
 
 - (void)setNetworkAddressIPv6:(NSString *)networkAddressIPv6 {
+    [self propertyWillChange];
     self.rootDict[kUTMConfigNetworkingKey][kUTMConfigNetworkIPv6SubnetKey] = networkAddressIPv6;
 }
 
@@ -100,6 +134,7 @@ static const NSString *const kUTMConfigNetworkPortForwardGuestPortKey = @"GuestP
 }
 
 - (void)setNetworkHost:(NSString *)networkHost {
+    [self propertyWillChange];
     self.rootDict[kUTMConfigNetworkingKey][kUTMConfigNetworkIPHostKey] = networkHost;
 }
 
@@ -108,6 +143,7 @@ static const NSString *const kUTMConfigNetworkPortForwardGuestPortKey = @"GuestP
 }
 
 - (void)setNetworkHostIPv6:(NSString *)networkHostIPv6 {
+    [self propertyWillChange];
     self.rootDict[kUTMConfigNetworkingKey][kUTMConfigNetworkIPv6HostKey] = networkHostIPv6;
 }
 
@@ -116,6 +152,7 @@ static const NSString *const kUTMConfigNetworkPortForwardGuestPortKey = @"GuestP
 }
 
 - (void)setNetworkDhcpStart:(NSString *)networkDHCPStart {
+    [self propertyWillChange];
     self.rootDict[kUTMConfigNetworkingKey][kUTMConfigNetworkDHCPStartKey] = networkDHCPStart;
 }
 
@@ -124,6 +161,7 @@ static const NSString *const kUTMConfigNetworkPortForwardGuestPortKey = @"GuestP
 }
 
 - (void)setNetworkDhcpHost:(NSString *)networkDhcpHost {
+    [self propertyWillChange];
     self.rootDict[kUTMConfigNetworkingKey][kUTMConfigNetworkDHCPHostKey] = networkDhcpHost;
 }
 
@@ -132,6 +170,7 @@ static const NSString *const kUTMConfigNetworkPortForwardGuestPortKey = @"GuestP
 }
 
 - (void)setNetworkDhcpDomain:(NSString *)networkDhcpDomain {
+    [self propertyWillChange];
     self.rootDict[kUTMConfigNetworkingKey][kUTMConfigNetworkDHCPDomainKey] = networkDhcpDomain;
 }
 
@@ -140,6 +179,7 @@ static const NSString *const kUTMConfigNetworkPortForwardGuestPortKey = @"GuestP
 }
 
 - (void)setNetworkDnsServer:(NSString *)networkDnsServer {
+    [self propertyWillChange];
     self.rootDict[kUTMConfigNetworkingKey][kUTMConfigNetworkIPDNSKey] = networkDnsServer;
 }
 
@@ -148,6 +188,7 @@ static const NSString *const kUTMConfigNetworkPortForwardGuestPortKey = @"GuestP
 }
 
 - (void)setNetworkDnsServerIPv6:(NSString *)networkDnsServerIPv6 {
+    [self propertyWillChange];
     self.rootDict[kUTMConfigNetworkingKey][kUTMConfigNetworkIPv6DNSKey] = networkDnsServerIPv6;
 }
 
@@ -156,6 +197,7 @@ static const NSString *const kUTMConfigNetworkPortForwardGuestPortKey = @"GuestP
 }
 
 - (void)setNetworkDnsSearch:(NSString *)networkDnsSearch {
+    [self propertyWillChange];
     self.rootDict[kUTMConfigNetworkingKey][kUTMConfigNetworkDNSSearchKey] = networkDnsSearch;
 }
 
@@ -165,44 +207,46 @@ static const NSString *const kUTMConfigNetworkPortForwardGuestPortKey = @"GuestP
 
 #pragma mark - Port forwarding
 
-- (NSUInteger)countPortForwards {
+- (NSInteger)countPortForwards {
     return [self.rootDict[kUTMConfigNetworkingKey][kUTMConfigNetworkPortForwardKey] count];
 }
 
-- (NSUInteger)newPortForward:(UTMConfigurationPortForward *)argument {
-    if (![self.rootDict[kUTMConfigNetworkingKey][kUTMConfigNetworkPortForwardKey] isKindOfClass:[NSMutableArray class]]) {
-        self.rootDict[kUTMConfigNetworkingKey][kUTMConfigNetworkPortForwardKey] = [NSMutableArray array];
-    }
-    NSUInteger index = [self countPortForwards];
+- (NSInteger)newPortForward:(UTMConfigurationPortForward *)argument {
+    NSInteger index = [self countPortForwards];
     [self updatePortForwardAtIndex:index withValue:argument];
     return index;
 }
 
-- (nullable UTMConfigurationPortForward *)portForwardForIndex:(NSUInteger)index {
+- (nullable UTMConfigurationPortForward *)portForwardForIndex:(NSInteger)index {
     NSDictionary *dict = self.rootDict[kUTMConfigNetworkingKey][kUTMConfigNetworkPortForwardKey][index];
     UTMConfigurationPortForward *portForward = nil;
     if (dict) {
         portForward = [[UTMConfigurationPortForward alloc] init];
         portForward.protocol = dict[kUTMConfigNetworkPortForwardProtocolKey];
         portForward.hostAddress = dict[kUTMConfigNetworkPortForwardHostAddressKey];
-        portForward.hostPort = [dict[kUTMConfigNetworkPortForwardHostPortKey] integerValue];
+        portForward.hostPort = dict[kUTMConfigNetworkPortForwardHostPortKey];
         portForward.guestAddress = dict[kUTMConfigNetworkPortForwardGuestAddressKey];
-        portForward.guestPort = [dict[kUTMConfigNetworkPortForwardGuestPortKey] integerValue];
+        portForward.guestPort = dict[kUTMConfigNetworkPortForwardGuestPortKey];
     }
     return portForward;
 }
 
-- (void)updatePortForwardAtIndex:(NSUInteger)index withValue:(UTMConfigurationPortForward *)argument {
+- (void)updatePortForwardAtIndex:(NSInteger)index withValue:(UTMConfigurationPortForward *)argument {
+    if (![self.rootDict[kUTMConfigNetworkingKey][kUTMConfigNetworkPortForwardKey] isKindOfClass:[NSMutableArray class]]) {
+        self.rootDict[kUTMConfigNetworkingKey][kUTMConfigNetworkPortForwardKey] = [NSMutableArray array];
+    }
     NSMutableDictionary *dict = [NSMutableDictionary dictionary];
     dict[kUTMConfigNetworkPortForwardProtocolKey] = argument.protocol;
     dict[kUTMConfigNetworkPortForwardHostAddressKey] = argument.hostAddress;
-    dict[kUTMConfigNetworkPortForwardHostPortKey] = @(argument.hostPort);
+    dict[kUTMConfigNetworkPortForwardHostPortKey] = argument.hostPort;
     dict[kUTMConfigNetworkPortForwardGuestAddressKey] = argument.guestAddress;
-    dict[kUTMConfigNetworkPortForwardGuestPortKey] = @(argument.guestPort);
+    dict[kUTMConfigNetworkPortForwardGuestPortKey] = argument.guestPort;
+    [self propertyWillChange];
     self.rootDict[kUTMConfigNetworkingKey][kUTMConfigNetworkPortForwardKey][index] = dict;
 }
 
-- (void)removePortForwardAtIndex:(NSUInteger)index {
+- (void)removePortForwardAtIndex:(NSInteger)index {
+    [self propertyWillChange];
     [self.rootDict[kUTMConfigNetworkingKey][kUTMConfigNetworkPortForwardKey] removeObjectAtIndex:index];
 }
 

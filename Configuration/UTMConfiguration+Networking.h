@@ -25,6 +25,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, assign) BOOL networkEnabled;
 @property (nonatomic, assign) BOOL networkIsolate;
 @property (nonatomic, nullable, copy) NSString *networkCard;
+@property (nonatomic, nullable, copy) NSString *networkCardMac;
 @property (nonatomic, nullable, copy) NSString *networkAddress;
 @property (nonatomic, nullable, copy) NSString *networkAddressIPv6;
 @property (nonatomic, nullable, copy) NSString *networkHost;
@@ -35,14 +36,14 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, nullable, copy) NSString *networkDnsServer;
 @property (nonatomic, nullable, copy) NSString *networkDnsServerIPv6;
 @property (nonatomic, nullable, copy) NSString *networkDnsSearch;
+@property (nonatomic, readonly) NSInteger countPortForwards;
 
 - (void)migrateNetworkConfigurationIfNecessary;
 
-- (NSUInteger)countPortForwards;
-- (NSUInteger)newPortForward:(UTMConfigurationPortForward *)argument;
-- (nullable UTMConfigurationPortForward *)portForwardForIndex:(NSUInteger)index;
-- (void)updatePortForwardAtIndex:(NSUInteger)index withValue:(UTMConfigurationPortForward *)argument;
-- (void)removePortForwardAtIndex:(NSUInteger)index;
+- (NSInteger)newPortForward:(UTMConfigurationPortForward *)argument;
+- (nullable UTMConfigurationPortForward *)portForwardForIndex:(NSInteger)index;
+- (void)updatePortForwardAtIndex:(NSInteger)index withValue:(UTMConfigurationPortForward *)argument;
+- (void)removePortForwardAtIndex:(NSInteger)index;
 - (NSArray<UTMConfigurationPortForward *> *)portForwards;
 
 @end

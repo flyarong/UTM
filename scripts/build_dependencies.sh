@@ -15,18 +15,20 @@
 # OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 set -e
 
-# Include URL list
-source "$(dirname $0)/sources"
-
 # Printing coloured lines
 GREEN='\033[0;32m'
 RED='\033[0;31m'
 NC='\033[0m'
 
+# Knobs
+IOS_SDKMINVER="9.0"
+MAC_SDKMINVER="10.11"
+
 # Build environment
+PLATFORM=
 CHOST=
 SDK=
-SDKMINVER="9.0"
+SDKMINVER=
 NCPU=$(sysctl -n hw.ncpu)
 
 command -v realpath >/dev/null 2>&1 || realpath() {
@@ -34,17 +36,17 @@ command -v realpath >/dev/null 2>&1 || realpath() {
 }
 
 usage () {
-    echo "Usage: [VARIABLE...] $(basename $0) [-a architecture] [-d] [-r] [-q]"
+    echo "Usage: [VARIABLE...] $(basename $0) [-p platform] [-a architecture] [-q qemu_path] [-d] [-r]"
     echo ""
+    echo "  -p platform      Target platform. Default ios. [ios|macos]"
     echo "  -a architecture  Target architecture. Default arm64. [armv7|armv7s|arm64|i386|x86_64]"
+    echo "  -q qemu_path     Do not download QEMU, use qemu_path instead."
     echo "  -d, --download   Force re-download of source even if already downloaded."
-    echo "  -r, --rebuild    Build only. Do not download, patch, configure."
-    echo "  -q, --qemu       Build qemu only. Do not build other projects."
+    echo "  -r, --rebuild    Avoid cleaning build directory."
     echo ""
     echo "  VARIABLEs are:"
     echo "    SDKVERSION     Target a specific SDK version."
     echo "    CHOST          Configure host, set if not deducable by ARCH."
-    echo "    SDK            SDK target, set if not deducable by ARCH. [iphoneos|iphonesimulator]"
     echo ""
     echo "    CFLAGS CPPFLAGS CXXFLAGS LDFLAGS PKG_CONFIG_PATH"
     echo ""
@@ -52,6 +54,8 @@ usage () {
 }
 
 check_env () {
+    command -v gmake >/dev/null 2>&1 || { echo >&2 "${RED}You must install GNU make on your host machine (and link it to 'gmake').${NC}"; exit 1; }
+    command -v meson >/dev/null 2>&1 || { echo >&2 "${RED}You must install 'meson' on your host machine.${NC}"; exit 1; }
     command -v pkg-config >/dev/null 2>&1 || { echo >&2 "${RED}You must install 'pkg-config' on your host machine.${NC}"; exit 1; }
     command -v msgfmt >/dev/null 2>&1 || { echo >&2 "${RED}You must install 'gettext' on your host machine.\n\t'msgfmt' needs to be in your \$PATH as well.${NC}"; exit 1; }
     command -v glib-mkenums >/dev/null 2>&1 || { echo >&2 "${RED}You must install 'glib' on your host machine.\n\t'glib-mkenums' needs to be in your \$PATH as well.${NC}"; exit 1; }
@@ -69,6 +73,7 @@ download () {
     TARGET="$BUILD_DIR/$FILE"
     DIR="$BUILD_DIR/$NAME"
     PATCH="$PATCHES_DIR/${NAME}.patch"
+    DATA="$PATCHES_DIR/data/${NAME}"
     if [ -f "$TARGET" -a -z "$REDOWNLOAD" ]; then
         echo "${GREEN}$TARGET already downloaded! Run with -d to force re-download.${NC}"
     else
@@ -85,6 +90,10 @@ download () {
     if [ -f "$PATCH" ]; then
         echo "${GREEN}Patching ${NAME}...${NC}"
         patch -d "$DIR" -p1 < "$PATCH"
+    fi
+    if [ -d "$DATA" ]; then
+        echo "${GREEN}Patching data ${NAME}...${NC}"
+        cp -r "$DATA/" "$DIR"
     fi
 }
 
@@ -103,7 +112,6 @@ download_all () {
     download $OPUS_SRC
     download $SPICE_PROTOCOL_SRC
     download $SPICE_SERVER_SRC
-    download $NCURSES_SRC
     download $JSON_GLIB_SRC
     download $GST_SRC
     download $GST_BASE_SRC
@@ -126,7 +134,7 @@ build_openssl() {
     TOOLCHAIN_PATH="$(dirname $(xcrun --sdk $SDK -find clang))"
     PATH="$PATH:$TOOLCHAIN_PATH"
     CROSS_TOP="$(xcrun --sdk $SDK --show-sdk-platform-path)/Developer" # for openssl
-    CROSS_SDK="$SDKNAME.$SDKVERSION.sdk" # for openssl
+    CROSS_SDK="$SDKNAME$SDKVERSION.sdk" # for openssl
     export CROSS_TOP
     export CROSS_SDK
     export PATH
@@ -144,6 +152,38 @@ build_openssl() {
         OPENSSL_CROSS=darwin64-x86_64-cc
         ;;
     esac
+    case $PLATFORM in
+    ios )
+        case $ARCH in
+        armv7 | armv7s )
+            OPENSSL_CROSS=iphoneos-cross
+            ;;
+        arm64 )
+            OPENSSL_CROSS=ios64-cross
+            ;;
+        i386 | x86_64 )
+            OPENSSL_CROSS=iossimulator64-cross
+            ;;
+        esac
+        ;;
+    macos )
+        case $ARCH in
+        arm64 )
+            OPENSSL_CROSS=darwin64-arm64-cc
+            ;;
+        i386 )
+            OPENSSL_CROSS=darwin-i386-cc
+            ;;
+        x86_64 )
+            OPENSSL_CROSS=darwin64-x86_64-cc
+            ;;
+        esac
+        ;;
+    esac
+    if [ -z "$OPENSSL_CROSS" ]; then
+        echo "${RED}Unsupported configuration for OpenSSL $PLATFORM, $ARCH${NC}"
+        exit 1
+    fi
 
     cd "$DIR"
     if [ -z "$REBUILD" ]; then
@@ -191,15 +231,9 @@ build_qemu_dependencies () {
     build $OPUS_SRC
     build $SPICE_PROTOCOL_SRC
     build $SPICE_SERVER_SRC
-    build $NCURSES_SRC --without-debug --enable-overwrite --enable-widec --with-ospeed=int16_t --without-progs --without-tack --without-tests
 }
 
 build_qemu () {
-    #QEMU_DIR="$BUILD_DIR/qemu"
-    #if [ ! -d "$QEMU_DIR" ]; then
-    #    echo "${GREEN}Cloning qemu...${NC}"
-    #    git clone --depth 1 --recursive --shallow-submodules "$QEMU_GIT" "$QEMU_DIR"
-    #fi
     QEMU_CFLAGS="$CFLAGS"
     QEMU_CXXFLAGS="$CXXFLAGS"
     QEMU_LDFLAGS="$LDFLAGS"
@@ -209,7 +243,17 @@ build_qemu () {
     CFLAGS=
     CXXFLAGS=
     LDFLAGS=
-    build $QEMU_SRC --enable-shared-lib
+
+    pwd="$(pwd)"
+    cd "$QEMU_DIR"
+    echo "${GREEN}Configuring QEMU...${NC}"
+    ./configure --prefix="$PREFIX" --host="$CHOST" --cross-prefix="" --with-coroutine=libucontext $@
+    echo "${GREEN}Building QEMU...${NC}"
+    gmake "$MAKEFLAGS"
+    echo "${GREEN}Installing QEMU...${NC}"
+    gmake "$MAKEFLAGS" install
+    cd "$pwd"
+
     CFLAGS="$QEMU_CFLAGS"
     CXXFLAGS="$QEMU_CXXFLAGS"
     LDFLAGS="$QEMU_LDFLAGS"
@@ -217,45 +261,55 @@ build_qemu () {
 
 steal_libucontext () {
     # HACK: use the libucontext built by qemu
-    FILE="$(basename $QEMU_SRC)"
-    NAME="${FILE%.tar.*}"
-    cp "$BUILD_DIR/$NAME/libucontext/libucontext.a" "$PREFIX/lib/libucontext.a"
-    cp "$BUILD_DIR/$NAME/libucontext/include/libucontext.h" "$PREFIX/include/libucontext.h"
+    cp "$QEMU_DIR/build/libucontext.a" "$PREFIX/lib/libucontext.a"
+    cp "$QEMU_DIR/libucontext/include/libucontext.h" "$PREFIX/include/libucontext.h"
 }
 
 build_spice_client () {
     build $JSON_GLIB_SRC
     build $GST_SRC --enable-static --enable-static-plugins --disable-registry
-    build $GST_BASE_SRC --enable-static --disable-fatal-warnings
-    build $GST_GOOD_SRC --enable-static
+    build $GST_BASE_SRC --enable-static --disable-fatal-warnings --disable-cocoa
+    build $GST_GOOD_SRC --enable-static --disable-osx_video
     build $XML2_SRC --enable-shared=no --without-python
-    build $SOUP_SRC --without-gnome --without-krb5-config --enable-shared=no
+    build $SOUP_SRC --without-gnome --without-krb5-config --enable-shared=no --disable-tls-check
     build $PHODAV_SRC
     build $SPICE_CLIENT_SRC --with-gtk=no
 }
 
 fixup () {
     FILE=$1
-    LIST=$(otool -L "$FILE" | tail -n +3 | cut -d ' ' -f 1 | awk '{$1=$1};1')
+    BASE=$(basename "$FILE")
+    BASEFILENAME=${BASE%.*}
+    BASEFILEEXT=${BASE:${#BASEFILENAME}}
+    NEWFILENAME="$BASEFILENAME.utm$BASEFILEEXT"
+    if [ -z "$BASEFILEEXT" ]; then
+        NEWFILENAME="$BASE"
+    fi
+    LIST=$(otool -L "$FILE" | tail -n +2 | cut -d ' ' -f 1 | awk '{$1=$1};1')
     OLDIFS=$IFS
     IFS=$'\n'
     echo "${GREEN}Fixing up $FILE...${NC}"
-    install_name_tool -id "@executable_path/Frameworks/$(basename "$FILE")" "$FILE"
-    for f in $LIST
+    newname="@rpath/$NEWFILENAME"
+    install_name_tool -id "$newname" "$FILE"
+    for g in $LIST
     do
-        base=$(basename "$f")
-        dir=$(dirname "$f")
+        base=$(basename "$g")
+        basefilename=${base%.*}
+        basefileext=${base:${#basefilename}}
+        dir=$(dirname "$g")
         if [ "$dir" == "$PREFIX/lib" ]; then
-            install_name_tool -change "$f" "@executable_path/Frameworks/$base" "$FILE"
+            newname="@rpath/$basefilename.utm$basefileext"
+            install_name_tool -change "$g" "$newname" "$FILE"
         fi
     done
+    mv "$FILE" "$(dirname "$FILE")/$NEWFILENAME"
     IFS=$OLDIFS
 }
 
 fixup_all () {
-    FILES=$(find "$SYSROOT_DIR/lib" -type f -name "*.dylib")
     OLDIFS=$IFS
     IFS=$'\n'
+    FILES=$(find "$SYSROOT_DIR/lib" -type f -name "*.dylib")
     for f in $FILES
     do
         fixup $f
@@ -274,14 +328,15 @@ generate_qapi () {
     APIS="$DIR/qapi/qapi-schema.json"
 
     echo "${GREEN}Generating qapi sources from ${APIS}...${NC}"
-    python "$BASEDIR/qapi-gen.py" -b -o "$SYSROOT_DIR/qapi" "$APIS"
+    python3 "$BASEDIR/qapi-gen.py" -b -o "$SYSROOT_DIR/qapi" "$APIS"
 }
 
 # parse args
 ARCH=
 REBUILD=
-QEMU_ONLY=
+QEMU_DIR=
 REDOWNLOAD=
+PLATFORM_FAMILY_NAME=
 while [ "x$1" != "x" ]; do
     case $1 in
     -a )
@@ -295,7 +350,12 @@ while [ "x$1" != "x" ]; do
         REBUILD=y
         ;;
     -q | --qemu )
-        QEMU_ONLY=y
+        QEMU_DIR="$2"
+        shift
+        ;;
+    -p )
+        PLATFORM=$2
+        shift
         ;;
     * )
         usage
@@ -309,53 +369,90 @@ if [ "x$ARCH" == "x" ]; then
 fi
 export ARCH
 
+if [ "x$PLATFORM" == "x" ]; then
+    PLATFORM=ios
+fi
+
 # Export supplied CHOST or deduce by ARCH
 if [ -z "$CHOST" ]; then
     case $ARCH in
     armv7 | armv7s )
-        CHOST=arm-apple-darwin
+        CPU=arm
         ;;
     arm64 )
-        CHOST=aarch64-apple-darwin
+        CPU=aarch64
         ;;
     i386 | x86_64 )
-        CHOST=$ARCH-apple-darwin
+        CPU=$ARCH
         ;;
     * )
         usage
         ;;
     esac
 fi
+CHOST=$CPU-apple-darwin
 export CHOST
 
-# Export supplied SDK or deduce by ARCH
-if [ -z "$SDK" ]; then
+case $PLATFORM in
+ios )
+    if [ -z "$SDKMINVER" ]; then
+        SDKMINVER="$IOS_SDKMINVER"
+    fi
     case $ARCH in
-    armv7 | armv7s | arm64 )
+    arm* )
         SDK=iphoneos
+        CFLAGS_MINVER="-miphoneos-version-min=$SDKMINVER"
         ;;
     i386 | x86_64 )
         SDK=iphonesimulator
-        ;;
-    * )
-        usage
+        CFLAGS_MINVER="-mios-simulator-version-min=$SDKMINVER"
         ;;
     esac
-fi
+    CFLAGS_TARGET=
+    PLATFORM_FAMILY_NAME="iOS"
+    QEMU_PLATFORM_BUILD_FLAGS="--enable-shared-lib --disable-hvf --disable-cocoa --disable-curl"
+    ;;
+macos )
+    if [ -z "$SDKMINVER" ]; then
+        SDKMINVER="$MAC_SDKMINVER"
+    fi
+    SDK=macosx
+    CFLAGS_MINVER="-mmacos-version-min=$SDKMINVER"
+    CFLAGS_TARGET="-target $ARCH-apple-macos"
+    PLATFORM_FAMILY_NAME="macOS"
+    QEMU_PLATFORM_BUILD_FLAGS="--enable-shared-lib --disable-cocoa --disable-curl --cpu=$CPU"
+    ;;
+* )
+    usage
+    ;;
+esac
+export SDK
+export SDKMINVER
 
 # Setup directories
-BUILD_DIR="build-$ARCH"
-PATCHES_DIR="patches"
-SYSROOT_DIR="sysroot-$ARCH"
+BASEDIR="$(dirname "$(realpath $0)")"
+BUILD_DIR="build-$PLATFORM_FAMILY_NAME-$ARCH"
+SYSROOT_DIR="sysroot-$PLATFORM_FAMILY_NAME-$ARCH"
+PATCHES_DIR="$BASEDIR/../patches"
+
+# Include URL list
+source "$PATCHES_DIR/sources"
+
+if [ -z "$QEMU_DIR" ]; then
+    FILE="$(basename $QEMU_SRC)"
+    QEMU_DIR="$BUILD_DIR/${FILE%.tar.*}"
+elif [ ! -d "$QEMU_DIR" ]; then
+    echo "${RED}Cannot find: ${QEMU_DIR}...${NC}"
+    exit 1
+fi
 
 [ -d "$SYSROOT_DIR" ] || mkdir -p "$SYSROOT_DIR"
 PREFIX="$(realpath "$SYSROOT_DIR")"
-BASEDIR="$(dirname "$(realpath $0)")"
 
 # Export supplied SDKVERSION or use system default
+SDKNAME=$(basename $(xcrun --sdk $SDK --show-sdk-platform-path) .platform)
 if [ ! -z "$SDKVERSION" ]; then
-    SDKNAME=$(basename $(xcrun --sdk $SDK --show-sdk-platform-path) .platform)
-    SDKROOT=$(xcrun --sdk $SDK --show-sdk-platform-path)"/Developer/SDKs/$SDKNAME.$SDKVERSION.sdk"
+    SDKROOT=$(xcrun --sdk $SDK --show-sdk-platform-path)"/Developer/SDKs/$SDKNAME$SDKVERSION.sdk"
 else
     SDKVERSION=$(xcrun --sdk $SDK --show-sdk-version) # current version
     SDKROOT=$(xcrun --sdk $SDK --show-sdk-path) # current version
@@ -377,10 +474,10 @@ export LD
 export PREFIX
 
 # Flags
-CFLAGS="$CFLAGS -arch $ARCH -isysroot $SDKROOT -I$PREFIX/include -miphoneos-version-min=$SDKMINVER"
-CPPFLAGS="$CPPFLAGS -arch $ARCH -isysroot $SDKROOT -I$PREFIX/include -miphoneos-version-min=$SDKMINVER"
-CXXFLAGS="$CXXFLAGS -arch $ARCH -isysroot $SDKROOT -I$PREFIX/include"
-LDFLAGS="$LDFLAGS -arch $ARCH -isysroot $SDKROOT -L$PREFIX/lib"
+CFLAGS="$CFLAGS -arch $ARCH -isysroot $SDKROOT -I$PREFIX/include $CFLAGS_MINVER $CFLAGS_TARGET"
+CPPFLAGS="$CPPFLAGS -arch $ARCH -isysroot $SDKROOT -I$PREFIX/include $CFLAGS_MINVER $CFLAGS_TARGET"
+CXXFLAGS="$CXXFLAGS -arch $ARCH -isysroot $SDKROOT -I$PREFIX/include $CFLAGS_MINVER $CFLAGS_TARGET"
+LDFLAGS="$LDFLAGS -arch $ARCH -isysroot $SDKROOT -L$PREFIX/lib $CFLAGS_MINVER $CFLAGS_TARGET"
 MAKEFLAGS="-j$NCPU"
 PKG_CONFIG_PATH="$PKG_CONFIG_PATH":"$SDKROOT/usr/lib/pkgconfig":"$PREFIX/lib/pkgconfig":"$PREFIX/share/pkgconfig"
 PKG_CONFIG_LIBDIR=""
@@ -395,7 +492,7 @@ export PKG_CONFIG_LIBDIR
 check_env
 
 if [ ! -f "$BUILD_DIR/BUILD_SUCCESS" ]; then
-    if [ ! -z "$REBUILD" -o ! -z "$QEMU_ONLY" ]; then
+    if [ ! -z "$REBUILD" ]; then
         echo "${RED}Error, no previous successful build found.${NC}"
         exit 1
     fi
@@ -404,17 +501,13 @@ fi
 if [ -z "$REBUILD" ]; then
     download_all
 fi
-if [ -z "$QEMU_ONLY" ]; then
-    echo "${GREEN}Deleting old sysroot!${NC}"
-    rm -rf "$PREFIX/"*
-    rm -f "$BUILD_DIR/BUILD_SUCCESS"
-    build_qemu_dependencies
-fi
-build_qemu
-if [ -z "$QEMU_ONLY" ]; then
-    steal_libucontext # should be a better way...
-    build_spice_client
-fi
+echo "${GREEN}Deleting old sysroot!${NC}"
+rm -rf "$PREFIX/"*
+rm -f "$BUILD_DIR/BUILD_SUCCESS"
+build_qemu_dependencies
+build_qemu $QEMU_PLATFORM_BUILD_FLAGS
+steal_libucontext # should be a better way...
+build_spice_client
 fixup_all
 remove_shared_gst_plugins # another hack...
 generate_qapi $QEMU_SRC

@@ -22,42 +22,57 @@
 #import "UTMViewState.h"
 #import "CocoaSpice.h"
 
-const int kMaxConnectionTries = 10; // qemu needs to start spice server first
+extern BOOL isPortAvailable(NSInteger port); // from UTMPortAllocator
+extern NSString *const kUTMErrorDomain;
+static const int kMaxConnectionTries = 30; // qemu needs to start spice server first
+static const int64_t kRetryWait = (int64_t)1*NSEC_PER_SEC;
 
-@implementation UTMSpiceIO {
-    CSConnection *_spice_connection;
-    CSMain *_spice;
-    void (^_connectionBlock)(BOOL, NSError*);
-    NSURL *_sharedDirectory;
-}
+typedef void (^doConnect_t)(void);
+typedef void (^connectionCallback_t)(BOOL success, NSString * _Nullable msg);
 
-- (id)initWithConfiguration:(UTMConfiguration *)configuration {
+@interface UTMSpiceIO ()
+
+@property (nonatomic, nullable) doConnect_t doConnect;
+@property (nonatomic, nullable) connectionCallback_t connectionCallback;
+@property (nonatomic, nullable) CSConnection *spiceConnection;
+@property (nonatomic, nullable) CSMain *spice;
+@property (nonatomic, nullable) CSSession *session;
+@property (nonatomic, nullable, copy) NSURL *sharedDirectory;
+@property (nonatomic) NSInteger port;
+@property (nonatomic) BOOL hasObservers;
+@property (nonatomic) BOOL dynamicResolutionSupported;
+
+@end
+
+@implementation UTMSpiceIO
+
+- (instancetype)initWithConfiguration:(UTMConfiguration *)configuration port:(NSInteger)port {
     if (self = [super init]) {
         _configuration = configuration;
+        _port = port;
     }
     
     return self;
 }
 
-- (void)setDelegate:(id<UTMSpiceIODelegate>)delegate {
-    _delegate = delegate;
-    _delegate.vmDisplay = self.primaryDisplay;
-    _delegate.vmInput = self.primaryInput;
+- (void)dealloc {
+    [self disconnect];
 }
 
 - (void)initializeSpiceIfNeeded {
-    if (!_spice) {
-        _spice = [[CSMain alloc] init];
+    @synchronized (self) {
+        if (!self.spice) {
+            self.spice = [CSMain sharedInstance];
+        }
+        
+        if (!self.spiceConnection) {
+            self.spiceConnection = [[CSConnection alloc] initWithHost:@"127.0.0.1" port:[NSString stringWithFormat:@"%lu", self.port]];
+            self.spiceConnection.delegate = self;
+            self.spiceConnection.audioEnabled = _configuration.soundEnabled;
+        }
+        
+        self.spiceConnection.glibMainContext = self.spice.glibMainContext;
     }
-    
-    if (!_spice_connection) {
-        _spice_connection = [[CSConnection alloc] initWithHost:@"127.0.0.1" port:@"5930"];
-        _spice_connection.delegate = self;
-        _spice_connection.audioEnabled = _configuration.soundEnabled;
-    }
-    
-    _spice_connection.glibMainContext = _spice.glibMainContext;
-    [_spice spiceSetDebug:YES];
     _primaryDisplay = nil;
     _primaryInput = nil;
     _delegate.vmDisplay = nil;
@@ -65,7 +80,9 @@ const int kMaxConnectionTries = 10; // qemu needs to start spice server first
 }
 
 - (BOOL)isSpiceInitialized {
-    return _spice != nil && _spice_connection != nil;
+    @synchronized (self) {
+        return self.spice != nil && self.spiceConnection != nil;
+    }
 }
 
 - (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary<NSKeyValueChangeKey,id> *)change context:(void *)context {
@@ -81,46 +98,70 @@ const int kMaxConnectionTries = 10; // qemu needs to start spice server first
 
 - (BOOL)startWithError:(NSError **)err {
     [self initializeSpiceIfNeeded];
-    if (![_spice spiceStart]) {
-        // error
-        return NO;
+    @synchronized (self) {
+        if (![self.spice spiceStart]) {
+            // error
+            return NO;
+        }
     }
     
     return YES;
 }
 
-- (void)connectWithCompletion: (void(^)(BOOL, NSError*)) block {
-    int tries = kMaxConnectionTries;
-    do {
-        [NSThread sleepForTimeInterval:0.1f];
-        if ([_spice_connection connect]) {
-            break;
+- (void)connectWithCompletion:(void(^)(BOOL, NSString * _Nullable))block {
+    __block int tries = kMaxConnectionTries;
+    __block __weak doConnect_t weakDoConnect;
+    __weak UTMSpiceIO *weakSelf = self;
+    self.doConnect = ^{
+        if (weakSelf && tries-- > 0) {
+            if (!isPortAvailable(weakSelf.port)) { // port is in use, try connecting
+                @synchronized (weakSelf) {
+                    if ([weakSelf.spiceConnection connect]) {
+                        weakSelf.connectionCallback = block;
+                        weakSelf.doConnect = nil;
+                        return;
+                    }
+                }
+            } else {
+                UTMLog(@"SPICE port not in use yet, retries left: %d", tries);
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, kRetryWait), dispatch_get_global_queue(QOS_CLASS_BACKGROUND, 0), weakDoConnect);
+                return;
+            }
         }
-    } while (tries-- > 0);
-    if (tries == 0) {
-        //TODO: error
-        block(NO, nil);
-    } else {
-        _connectionBlock = block;
-    }
+        if (tries == 0) {
+            // if we get here, error is unrecoverable
+            block(NO, NSLocalizedString(@"Failed to connect to SPICE server.", "UTMSpiceIO"));
+        }
+        weakSelf.connectionCallback = nil;
+        weakSelf.doConnect = nil;
+    };
+    weakDoConnect = self.doConnect;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_BACKGROUND, 0), self.doConnect);
 }
 
 - (void)disconnect {
-    [self removeObserver:self forKeyPath:@"primaryDisplay.viewportScale"];
-    [self removeObserver:self forKeyPath:@"primaryDisplay.displaySize"];
-    [_spice_connection disconnect];
-    _spice_connection.delegate = nil;
-    _spice_connection = nil;
-    [_spice spiceStop];
-    _spice = nil;
+    @synchronized (self) {
+        if (self.hasObservers) {
+            [self removeObserver:self forKeyPath:@"primaryDisplay.viewportScale"];
+            [self removeObserver:self forKeyPath:@"primaryDisplay.displaySize"];
+            self.hasObservers = NO;
+        }
+        [self.spiceConnection disconnect];
+        self.spiceConnection.delegate = nil;
+        self.spiceConnection = nil;
+        self.spice = nil;
+    }
+    self.doConnect = nil;
 }
 
-- (UIImage*)screenshot {
+- (UTMScreenshot *)screenshot {
     return [self.primaryDisplay screenshot];
 }
 
 - (void)setDebugMode:(BOOL)debugMode {
-    [_spice spiceSetDebug: debugMode];
+    @synchronized (self) {
+        [self.spice spiceSetDebug: debugMode];
+    }
 }
 
 - (void)syncViewState:(UTMViewState *)viewState {
@@ -134,91 +175,120 @@ const int kMaxConnectionTries = 10; // qemu needs to start spice server first
 - (void)restoreViewState:(UTMViewState *)viewState {
     self.primaryDisplay.viewportOrigin = CGPointMake(viewState.displayOriginX, viewState.displayOriginY);
     self.primaryDisplay.displaySize = CGSizeMake(viewState.displaySizeWidth, viewState.displaySizeHeight);
-    self.primaryDisplay.viewportScale = viewState.displayScale;
+    if (viewState.displayScale) { // cannot be zero
+        self.primaryDisplay.viewportScale = viewState.displayScale;
+    } else {
+        self.primaryDisplay.viewportScale = 1.0; // default value
+    }
 }
 
 #pragma mark - CSConnectionDelegate
 
 - (void)spiceConnected:(CSConnection *)connection {
-    NSAssert(connection == _spice_connection, @"Unknown connection");
+    NSAssert(connection == self.spiceConnection, @"Unknown connection");
 }
 
 - (void)spiceDisconnected:(CSConnection *)connection {
-    NSAssert(connection == _spice_connection, @"Unknown connection");
+    NSAssert(connection == self.spiceConnection, @"Unknown connection");
 }
 
 - (void)spiceError:(CSConnection *)connection err:(NSString *)msg {
-    NSAssert(connection == _spice_connection, @"Unknown connection");
-    //[self errorTriggered:msg];
-    if (_connectionBlock) {
-        _connectionBlock(NO, nil);
-        _connectionBlock = nil;
+    NSAssert(connection == self.spiceConnection, @"Unknown connection");
+    if (self.connectionCallback) {
+        self.connectionCallback(NO, msg);
+        self.connectionCallback = nil;
     }
 }
 
 - (void)spiceDisplayCreated:(CSConnection *)connection display:(CSDisplayMetal *)display input:(CSInput *)input {
-    NSAssert(connection == _spice_connection, @"Unknown connection");
+    NSAssert(connection == self.spiceConnection, @"Unknown connection");
     if (display.channelID == 0 && display.monitorID == 0) {
         _primaryDisplay = display;
         _primaryInput = input;
         _delegate.vmDisplay = display;
         _delegate.vmInput = input;
-        [self addObserver:self forKeyPath:@"primaryDisplay.viewportScale" options:0 context:nil];
-        [self addObserver:self forKeyPath:@"primaryDisplay.displaySize" options:0 context:nil];
-        if (_connectionBlock) {
-            _connectionBlock(YES, nil);
-            _connectionBlock = nil;
+        @synchronized (self) {
+            [self addObserver:self forKeyPath:@"primaryDisplay.viewportScale" options:0 context:nil];
+            [self addObserver:self forKeyPath:@"primaryDisplay.displaySize" options:0 context:nil];
+            self.hasObservers = YES;
+        }
+        if (self.connectionCallback) {
+            self.connectionCallback(YES, nil);
+            self.connectionCallback = nil;
         }
     }
 }
 
 - (void)spiceSessionCreated:(CSConnection *)connection session:(CSSession *)session {
+    self.session = session;
     session.shareClipboard = self.configuration.shareClipboardEnabled;
-    [self startSharingDirectory:session];
+    if (self.configuration.shareDirectoryEnabled) {
+        [self startSharingDirectory];
+    } else {
+        UTMLog(@"shared directory disabled");
+    }
 }
 
 - (void)spiceSessionEnded:(CSConnection *)connection session:(CSSession *)session {
-    [self endSharingDirectory:session];
+    [self endSharingDirectory];
+    self.session = nil;
+}
+
+- (void)spiceAgentConnected:(CSConnection *)connection supportingFeatures:(CSConnectionAgentFeature)features {
+    self.dynamicResolutionSupported = (features & kCSConnectionAgentFeatureMonitorsConfig) != kCSConnectionAgentFeatureNone;
+}
+
+- (void)spiceAgentDisconnected:(CSConnection *)connection {
+    self.dynamicResolutionSupported = NO;
 }
 
 #pragma mark - Shared Directory
 
-- (void)startSharingDirectory:(CSSession *)session {
-    if (_sharedDirectory) {
-        [self endSharingDirectory:session];
+- (void)changeSharedDirectory:(NSURL *)url {
+    if (self.sharedDirectory) {
+        [self endSharingDirectory];
     }
-    if (self.configuration.shareDirectoryEnabled) {
-        UTMLog(@"enabling shared directory");
-        BOOL stale;
-        NSError *err;
-        NSURL *shareURL = [NSURL URLByResolvingBookmarkData:self.configuration.shareDirectoryBookmark
-                                                    options:0
-                                              relativeToURL:nil
-                                        bookmarkDataIsStale:&stale
-                                                      error:&err];
-        if (!shareURL) {
-            UTMLog(@"error getting bookmark: %@", err);
-            return;
-        }
-        if (stale) {
-            UTMLog(@"bookmark stale, should get new bookmark!");
-        }
-        //if ([shareURL startAccessingSecurityScopedResource]) {
-            _sharedDirectory = shareURL;
-            UTMLog(@"setting share directory to %@", shareURL.path);
-            [session setSharedDirectory:shareURL.path readOnly:self.configuration.shareDirectoryReadOnly];
-        //} else {
-        //    UTMLog(@"failed to access security scope for shared directory, was access revoked?");
-        //}
+    self.sharedDirectory = url;
+    if (self.session) {
+        [self startSharingDirectory];
     }
 }
 
-- (void)endSharingDirectory:(CSSession *)session {
-    if (_sharedDirectory) {
-        //[_sharedDirectory stopAccessingSecurityScopedResource];
-        _sharedDirectory = nil;
+- (void)startSharingDirectory {
+    if (self.sharedDirectory) {
+        UTMLog(@"setting share directory to %@", self.sharedDirectory.path);
+        [self.sharedDirectory startAccessingSecurityScopedResource];
+        [self.session setSharedDirectory:self.sharedDirectory.path readOnly:self.configuration.shareDirectoryReadOnly];
+    }
+}
+
+- (void)endSharingDirectory {
+    if (self.sharedDirectory) {
+        [self.sharedDirectory stopAccessingSecurityScopedResource];
+        self.sharedDirectory = nil;
         UTMLog(@"ended share directory sharing");
     }
+}
+
+#pragma mark - Properties
+
+- (void)setDelegate:(id<UTMSpiceIODelegate>)delegate {
+    _delegate = delegate;
+    _delegate.vmDisplay = self.primaryDisplay;
+    _delegate.vmInput = self.primaryInput;
+    // make sure to send the dynamic resolution change when attached
+    if ([self.delegate respondsToSelector:@selector(dynamicResolutionSupportDidChange:)]) {
+        [self.delegate dynamicResolutionSupportDidChange:self.dynamicResolutionSupported];
+    }
+}
+
+- (void)setDynamicResolutionSupported:(BOOL)dynamicResolutionSupported {
+    if (_dynamicResolutionSupported != dynamicResolutionSupported) {
+        if ([self.delegate respondsToSelector:@selector(dynamicResolutionSupportDidChange:)]) {
+            [self.delegate dynamicResolutionSupportDidChange:dynamicResolutionSupported];
+        }
+    }
+    _dynamicResolutionSupported = dynamicResolutionSupported;
 }
 
 @end

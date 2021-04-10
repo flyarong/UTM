@@ -14,10 +14,11 @@
 # This work is licensed under the terms of the GNU GPL, version 2.
 # See the COPYING file in the top-level directory.
 
-import re
 from collections import OrderedDict
-from qapi.common import c_name
-from qapi.error import QAPISemError
+import re
+
+from .common import c_name
+from .error import QAPISemError
 
 
 # Names must be letters, numbers, -, and _.  They must start with letter,
@@ -35,7 +36,6 @@ def check_name_is_str(name, info, source):
 def check_name_str(name, info, source,
                    allow_optional=False, enum_member=False,
                    permit_upper=False):
-    global valid_name
     membername = name
 
     if allow_optional and name.startswith('*'):
@@ -89,10 +89,17 @@ def check_flags(expr, info):
         if key in expr and expr[key] is not False:
             raise QAPISemError(
                 info, "flag '%s' may only use false value" % key)
-    for key in ['boxed', 'allow-oob', 'allow-preconfig']:
+    for key in ['boxed', 'allow-oob', 'allow-preconfig', 'coroutine']:
         if key in expr and expr[key] is not True:
             raise QAPISemError(
                 info, "flag '%s' may only use true value" % key)
+    if 'allow-oob' in expr and 'coroutine' in expr:
+        # This is not necessarily a fundamental incompatibility, but
+        # we don't have a use case and the desired semantics isn't
+        # obvious.  The simplest solution is to forbid it until we get
+        # a use case for it.
+        raise QAPISemError(info, "flags 'allow-oob' and 'coroutine' "
+                                 "are incompatible")
 
 
 def check_if(expr, info, source):
@@ -168,8 +175,9 @@ def check_type(value, info, source,
                        allow_optional=True, permit_upper=permit_upper)
         if c_name(key, False) == 'u' or c_name(key, False).startswith('has_'):
             raise QAPISemError(info, "%s uses reserved name" % key_source)
-        check_keys(arg, info, key_source, ['type'], ['if'])
+        check_keys(arg, info, key_source, ['type'], ['if', 'features'])
         check_if(arg, info, key_source)
+        check_features(arg.get('features'), info)
         check_type(arg['type'], info, key_source, allow_array=True)
 
 
@@ -220,7 +228,6 @@ def check_struct(expr, info):
 
     check_type(members, info, "'data'", allow_dict=name)
     check_type(expr.get('base'), info, "'base'")
-    check_features(expr.get('features'), info)
 
 
 def check_union(expr, info):
@@ -249,7 +256,7 @@ def check_union(expr, info):
 def check_alternate(expr, info):
     members = expr['data']
 
-    if len(members) == 0:
+    if not members:
         raise QAPISemError(info, "'data' must not be empty")
     for (key, value) in members.items():
         source = "'data' member '%s'" % key
@@ -268,7 +275,6 @@ def check_command(expr, info):
         raise QAPISemError(info, "'boxed': true requires 'data'")
     check_type(args, info, "'data'", allow_dict=not boxed)
     check_type(rets, info, "'returns'", allow_array=True)
-    check_features(expr.get('features'), info)
 
 
 def check_event(expr, info):
@@ -320,18 +326,18 @@ def check_exprs(exprs):
 
         if meta == 'enum':
             check_keys(expr, info, meta,
-                       ['enum', 'data'], ['if', 'prefix'])
+                       ['enum', 'data'], ['if', 'features', 'prefix'])
             check_enum(expr, info)
         elif meta == 'union':
             check_keys(expr, info, meta,
                        ['union', 'data'],
-                       ['base', 'discriminator', 'if'])
+                       ['base', 'discriminator', 'if', 'features'])
             normalize_members(expr.get('base'))
             normalize_members(expr['data'])
             check_union(expr, info)
         elif meta == 'alternate':
             check_keys(expr, info, meta,
-                       ['alternate', 'data'], ['if'])
+                       ['alternate', 'data'], ['if', 'features'])
             normalize_members(expr['data'])
             check_alternate(expr, info)
         elif meta == 'struct':
@@ -344,18 +350,19 @@ def check_exprs(exprs):
                        ['command'],
                        ['data', 'returns', 'boxed', 'if', 'features',
                         'gen', 'success-response', 'allow-oob',
-                        'allow-preconfig'])
+                        'allow-preconfig', 'coroutine'])
             normalize_members(expr.get('data'))
             check_command(expr, info)
         elif meta == 'event':
             check_keys(expr, info, meta,
-                       ['event'], ['data', 'boxed', 'if'])
+                       ['event'], ['data', 'boxed', 'if', 'features'])
             normalize_members(expr.get('data'))
             check_event(expr, info)
         else:
             assert False, 'unexpected meta type'
 
         check_if(expr, info, meta)
+        check_features(expr.get('features'), info)
         check_flags(expr, info)
 
     return exprs

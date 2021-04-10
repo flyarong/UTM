@@ -15,16 +15,36 @@
 //
 
 #import <Foundation/Foundation.h>
+#import "QEMUHelperProtocol.h"
+
+typedef void * _Nullable (* _Nonnull UTMQemuThreadEntry)(void * _Nullable args);
 
 @class UTMConfiguration;
+@class UTMLogging;
 
 NS_ASSUME_NONNULL_BEGIN
 
 @interface UTMQemu : NSObject
 
-- (void)pushArgv:(NSString *)arg;
+@property (nonatomic, readonly) BOOL hasRemoteProcess;
+@property (nonatomic, readonly) NSURL *libraryURL;
+@property (nonatomic) NSArray<NSString *> *argv;
+@property (nonatomic) dispatch_semaphore_t done;
+@property (nonatomic) NSInteger status;
+@property (nonatomic) NSInteger fatal;
+@property (nonatomic) UTMQemuThreadEntry entry;
+@property (nonatomic, nullable) UTMLogging *logging;
+
+- (instancetype)init;
+- (instancetype)initWithArgv:(NSArray<NSString *> *)argv NS_DESIGNATED_INITIALIZER;
+- (BOOL)setupXpc;
+- (void)pushArgv:(nullable NSString *)arg;
 - (void)clearArgv;
-- (void)startDylib:(nonnull NSString *)dylib main:(nonnull NSString *)main completion:(void(^)(BOOL,NSString *))completion;
+- (void)startQemu:(nonnull NSString *)arch completion:(void(^)(BOOL,NSString *))completion;
+- (void)stopQemu;
+- (void)accessDataWithBookmark:(NSData *)bookmark;
+- (void)accessDataWithBookmark:(NSData *)bookmark securityScoped:(BOOL)securityScoped completion:(void(^)(BOOL, NSData * _Nullable, NSString * _Nullable))completion;
+- (void)stopAccessingPath:(nullable NSString *)path;
 
 @end
 

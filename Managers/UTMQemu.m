@@ -18,40 +18,65 @@
 #import "UTMLogging.h"
 #import <dlfcn.h>
 #import <pthread.h>
+#import <TargetConditionals.h>
 
 @implementation UTMQemu {
-    int (*_main)(int, const char *[]);
     NSMutableArray<NSString *> *_argv;
-    dispatch_semaphore_t _qemu_done;
-    int _status;
-    int _fatal;
+    NSMutableArray<NSURL *> *_urls;
+    NSXPCConnection *_connection;
 }
 
-void *start_qemu(void *args) {
-    UTMQemu *self = (__bridge_transfer UTMQemu *)args;
-    
-    NSCAssert(self->_main != NULL, @"Started thread with invalid function.");
-    NSCAssert(self->_argv, @"Started thread with invalid argv.");
-    
-    int argc = (int)self->_argv.count;
-    const char *argv[argc];
-    for (int i = 0; i < self->_argv.count; i++) {
-        argv[i] = [self->_argv[i] UTF8String];
-    }
-    self->_status = self->_main(argc, argv);
-    dispatch_semaphore_signal(self->_qemu_done);
-    return NULL;
+#pragma mark - Properties
+
+@synthesize argv = _argv;
+
+- (NSURL *)libraryURL {
+    NSURL *bundleURL = [[NSBundle mainBundle] bundleURL];
+    NSURL *contentsURL = [bundleURL URLByAppendingPathComponent:@"Contents" isDirectory:YES];
+    NSURL *frameworksURL = [contentsURL URLByAppendingPathComponent:@"Frameworks" isDirectory:YES];
+    return frameworksURL;
 }
 
-- (void)pushArgv:(NSString *)arg {
-    if (!_argv) {
-        _argv = [NSMutableArray<NSString *> array];
+- (BOOL)hasRemoteProcess {
+    return _connection != nil;
+}
+
+#pragma mark - Construction
+
+- (instancetype)init {
+    return [self initWithArgv:[NSArray<NSString *> array]];
+}
+
+- (instancetype)initWithArgv:(NSArray<NSString *> *)argv {
+    if (self = [super init]) {
+        _argv = [argv mutableCopy];
+        _urls = [NSMutableArray<NSURL *> array];
     }
+    return self;
+}
+
+- (void)dealloc {
+    [self stopQemu];
+}
+
+#pragma mark - Methods
+
+- (BOOL)setupXpc {
+#if !TARGET_OS_IPHONE // only supported on macOS
+    _connection = [[NSXPCConnection alloc] initWithServiceName:@"com.utmapp.QEMUHelper"];
+    _connection.remoteObjectInterface = [NSXPCInterface interfaceWithProtocol:@protocol(QEMUHelperProtocol)];
+    [_connection resume];
+#endif
+    return _connection != nil;
+}
+
+- (void)pushArgv:(nullable NSString *)arg {
+    NSAssert(arg, @"Cannot push null argument!");
     [_argv addObject:arg];
 }
 
 - (void)clearArgv {
-    _argv = nil;
+    [_argv removeAllObjects];
 }
 
 - (void)printArgv {
@@ -63,16 +88,24 @@ void *start_qemu(void *args) {
             args = [args stringByAppendingFormat:@" %@", arg];
         }
     }
-    UTMLog(@"Running: %@", args);
+    NSString *line = [[NSString alloc] initWithFormat:@"Running: %@\n", args];
+    [self.logging writeLine:line];
+    NSLog(@"%@", line);
 }
 
-- (void)startDylib:(nonnull NSString *)dylib main:(nonnull NSString *)main completion:(void(^)(BOOL,NSString *))completion {
+- (BOOL)didLoadDylib:(void *)handle {
+    return YES;
+}
+
+- (void)startDylibThread:(nonnull NSString *)dylib completion:(void(^)(BOOL,NSString *))completion {
     void *dlctx;
     __block pthread_t qemu_thread;
+    pthread_attr_t qosAttribute;
     __weak typeof(self) wself = self;
     
-    _status = _fatal = 0;
-    _qemu_done = dispatch_semaphore_create(0);
+    NSAssert(self.entry != NULL, @"entry is NULL!");
+    self.status = self.fatal = 0;
+    self.done = dispatch_semaphore_create(0);
     UTMLog(@"Loading %@", dylib);
     dlctx = dlopen([dylib UTF8String], RTLD_LOCAL);
     if (dlctx == NULL) {
@@ -80,8 +113,7 @@ void *start_qemu(void *args) {
         completion(NO, err);
         return;
     }
-    _main = dlsym(dlctx, [main UTF8String]);
-    if (_main == NULL) {
+    if (![self didLoadDylib:dlctx]) {
         NSString *err = [NSString stringWithUTF8String:dlerror()];
         dlclose(dlctx);
         completion(NO, err);
@@ -92,7 +124,7 @@ void *start_qemu(void *args) {
             __strong typeof(self) sself = wself;
             if (sself) {
                 sself->_fatal = 1;
-                dispatch_semaphore_signal(sself->_qemu_done);
+                dispatch_semaphore_signal(sself->_done);
             }
             pthread_exit(NULL);
         }
@@ -100,23 +132,139 @@ void *start_qemu(void *args) {
         completion(NO, NSLocalizedString(@"Internal error has occurred.", @"UTMQemu"));
         return;
     }
-    [self printArgv];
-    pthread_create(&qemu_thread, NULL, &start_qemu, (__bridge_retained void *)self);
+    pthread_attr_init(&qosAttribute);
+    pthread_attr_set_qos_class_np(&qosAttribute, QOS_CLASS_USER_INTERACTIVE, 0);
+    pthread_create(&qemu_thread, &qosAttribute, self.entry, (__bridge_retained void *)self);
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_BACKGROUND, 0), ^{
-        if (dispatch_semaphore_wait(self->_qemu_done, DISPATCH_TIME_FOREVER)) {
+        if (dispatch_semaphore_wait(self.done, DISPATCH_TIME_FOREVER)) {
             dlclose(dlctx);
             completion(NO, NSLocalizedString(@"Internal error has occurred.", @"UTMQemu"));
         } else {
             if (dlclose(dlctx) < 0) {
                 NSString *err = [NSString stringWithUTF8String:dlerror()];
                 completion(NO, err);
-            } else if (self->_fatal || self->_status) {
-                completion(NO, [NSString stringWithFormat:NSLocalizedString(@"QEMU exited from an error: %@", @"UTMQemu"), [[UTMLogging sharedInstance] lastErrorLine]]);
+            } else if (self.fatal || self.status) {
+                completion(NO, [NSString stringWithFormat:NSLocalizedString(@"QEMU exited from an error: %@", @"UTMQemu"), self.logging.lastErrorLine]);
             } else {
                 completion(YES, nil);
             }
         }
     });
+}
+
+- (void)startQemuRemote:(nonnull NSString *)name completion:(void(^)(BOOL,NSString *))completion {
+    NSError *error;
+    NSData *libBookmark = [self.libraryURL bookmarkDataWithOptions:0
+                                    includingResourceValuesForKeys:nil
+                                                     relativeToURL:nil
+                                                             error:&error];
+    if (!libBookmark) {
+        completion(NO, error.localizedDescription);
+        return;
+    }
+    NSFileHandle *standardOutput = self.logging.standardOutput.fileHandleForWriting;
+    NSFileHandle *standardError = self.logging.standardError.fileHandleForWriting;
+    [[_connection remoteObjectProxyWithErrorHandler:^(NSError * _Nonnull error) {
+        if (error.domain == NSCocoaErrorDomain && error.code == NSXPCConnectionInvalid) {
+            completion(YES, nil); // inhibit this error since we always see it on quit
+        } else {
+            completion(NO, error.localizedDescription);
+        }
+    }] startQemu:name standardOutput:standardOutput standardError:standardError libraryBookmark:libBookmark argv:self.argv onExit:^(BOOL success, NSString *msg){
+        if (!success && !msg) {
+            msg = self.logging.lastErrorLine;
+        }
+        completion(success, msg);
+    }];
+}
+
+- (void)startQemu:(nonnull NSString *)arch completion:(void(^)(BOOL,NSString *))completion {
+    [self printArgv];
+    NSString *dylib = [NSString stringWithFormat:@"libqemu-%@-softmmu.utm.dylib", arch];
+    if (_connection) {
+        [self startQemuRemote:dylib completion:completion];
+    } else {
+        [self startDylibThread:dylib completion:completion];
+    }
+}
+
+- (void)stopQemu {
+    if (_connection) {
+        [_connection invalidate];
+    }
+    for (NSURL *url in _urls) {
+        [url stopAccessingSecurityScopedResource];
+    }
+}
+
+- (void)accessDataWithBookmarkThread:(NSData *)bookmark securityScoped:(BOOL)securityScoped completion:(void(^)(BOOL, NSData * _Nullable, NSString * _Nullable))completion  {
+    BOOL stale = NO;
+    NSError *err;
+    NSURL *url = [NSURL URLByResolvingBookmarkData:bookmark
+                                           options:0
+                                     relativeToURL:nil
+                               bookmarkDataIsStale:&stale
+                                             error:&err];
+    if (!url) {
+        UTMLog(@"Failed to access bookmark data.");
+        completion(NO, nil, nil);
+        return;
+    }
+    if (stale || !securityScoped) {
+        bookmark = [url bookmarkDataWithOptions:NSURLBookmarkCreationMinimalBookmark
+                 includingResourceValuesForKeys:nil
+                                  relativeToURL:nil
+                                          error:&err];
+        if (!bookmark) {
+            UTMLog(@"Failed to create new bookmark!");
+            completion(NO, bookmark, url.path);
+            return;
+        }
+    }
+    if ([url startAccessingSecurityScopedResource]) {
+        [_urls addObject:url];
+    } else {
+        UTMLog(@"Failed to access security scoped resource for: %@", url);
+    }
+    completion(YES, bookmark, url.path);
+}
+
+- (void)accessDataWithBookmark:(NSData *)bookmark {
+    [self accessDataWithBookmark:bookmark securityScoped:NO completion:^(BOOL success, NSData *bookmark, NSString *path) {
+        if (!success) {
+            UTMLog(@"Access bookmark failed for: %@", path);
+        }
+    }];
+}
+
+- (void)accessDataWithBookmark:(NSData *)bookmark securityScoped:(BOOL)securityScoped completion:(void(^)(BOOL, NSData * _Nullable, NSString * _Nullable))completion {
+    if (_connection) {
+        [[_connection remoteObjectProxy] accessDataWithBookmark:bookmark securityScoped:securityScoped completion:completion];
+    } else {
+        [self accessDataWithBookmarkThread:bookmark securityScoped:securityScoped completion:completion];
+    }
+}
+
+- (void)stopAccessingPathThread:(nullable NSString *)path {
+    if (!path) {
+        return;
+    }
+    for (NSURL *url in _urls) {
+        if ([url.path isEqualToString:path]) {
+            [url stopAccessingSecurityScopedResource];
+            [_urls removeObject:url];
+            return;
+        }
+    }
+    UTMLog(@"Cannot find '%@' in existing scoped access.", path);
+}
+
+- (void)stopAccessingPath:(nullable NSString *)path {
+    if (_connection) {
+        [[_connection remoteObjectProxy] stopAccessingPath:path];
+    } else {
+        [self stopAccessingPathThread:path];
+    }
 }
 
 @end

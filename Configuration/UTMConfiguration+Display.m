@@ -15,6 +15,7 @@
 //
 
 #import "UTMConfiguration+Display.h"
+#import "UTM-Swift.h"
 
 extern const NSString *const kUTMConfigDisplayKey;
 
@@ -28,6 +29,7 @@ const NSString *const kUTMConfigConsoleFontKey = @"ConsoleFont";
 const NSString *const kUTMConfigConsoleFontSizeKey = @"ConsoleFontSize";
 const NSString *const kUTMConfigConsoleBlinkKey = @"ConsoleBlink";
 const NSString *const kUTMConfigConsoleResizeCommandKey = @"ConsoleResizeCommand";
+const NSString *const kUTMConfigDisplayCardKey = @"DisplayCard";
 
 @interface UTMConfiguration ()
 
@@ -55,11 +57,21 @@ const NSString *const kUTMConfigConsoleResizeCommandKey = @"ConsoleResizeCommand
     if (self.consoleFontSize.integerValue == 0) {
         self.consoleFontSize = @12;
     }
+    if (!self.displayCard) {
+        if ([self.systemTarget hasPrefix:@"pc"] || [self.systemTarget hasPrefix:@"q35"]) {
+            self.displayCard = @"qxl-vga";
+        } else if ([self.systemTarget isEqualToString:@"virt"] || [self.systemTarget hasPrefix:@"virt-"]) {
+            self.displayCard = @"virtio-ramfb";
+        } else {
+            self.displayCard = @"VGA";
+        }
+    }
 }
 
 #pragma mark - Display settings
 
 - (void)setDisplayConsoleOnly:(BOOL)displayConsoleOnly {
+    [self propertyWillChange];
     self.rootDict[kUTMConfigDisplayKey][kUTMConfigConsoleOnlyKey] = @(displayConsoleOnly);
 }
 
@@ -68,6 +80,7 @@ const NSString *const kUTMConfigConsoleResizeCommandKey = @"ConsoleResizeCommand
 }
 
 - (void)setDisplayFitScreen:(BOOL)displayFitScreen {
+    [self propertyWillChange];
     self.rootDict[kUTMConfigDisplayKey][kUTMConfigDisplayFitScreenKey] = @(displayFitScreen);
 }
 
@@ -76,6 +89,7 @@ const NSString *const kUTMConfigConsoleResizeCommandKey = @"ConsoleResizeCommand
 }
 
 - (void)setDisplayRetina:(BOOL)displayRetina {
+    [self propertyWillChange];
     self.rootDict[kUTMConfigDisplayKey][kUTMConfigDisplayRetinaKey] = @(displayRetina);
 }
 
@@ -84,6 +98,7 @@ const NSString *const kUTMConfigConsoleResizeCommandKey = @"ConsoleResizeCommand
 }
 
 - (void)setDisplayUpscaler:(NSString *)displayUpscaler {
+    [self propertyWillChange];
     self.rootDict[kUTMConfigDisplayKey][kUTMConfigDisplayUpscalerKey] = displayUpscaler;
 }
 
@@ -100,6 +115,7 @@ const NSString *const kUTMConfigConsoleResizeCommandKey = @"ConsoleResizeCommand
 }
 
 - (void)setDisplayDownscaler:(NSString *)displayDownscaler {
+    [self propertyWillChange];
     self.rootDict[kUTMConfigDisplayKey][kUTMConfigDisplayDownscalerKey] = displayDownscaler;
 }
 
@@ -116,6 +132,7 @@ const NSString *const kUTMConfigConsoleResizeCommandKey = @"ConsoleResizeCommand
 }
 
 - (void)setConsoleTheme:(NSString *)consoleTheme {
+    [self propertyWillChange];
     self.rootDict[kUTMConfigDisplayKey][kUTMConfigConsoleThemeKey] = consoleTheme;
 }
 
@@ -124,6 +141,7 @@ const NSString *const kUTMConfigConsoleResizeCommandKey = @"ConsoleResizeCommand
 }
 
 - (void)setConsoleFont:(NSString *)consoleFont {
+    [self propertyWillChange];
     self.rootDict[kUTMConfigDisplayKey][kUTMConfigConsoleFontKey] = consoleFont;
 }
 
@@ -132,6 +150,7 @@ const NSString *const kUTMConfigConsoleResizeCommandKey = @"ConsoleResizeCommand
 }
 
 - (void)setConsoleFontSize:(NSNumber *)consoleFontSize {
+    [self propertyWillChange];
     self.rootDict[kUTMConfigDisplayKey][kUTMConfigConsoleFontSizeKey] = consoleFontSize;
 }
 
@@ -140,6 +159,7 @@ const NSString *const kUTMConfigConsoleResizeCommandKey = @"ConsoleResizeCommand
 }
 
 - (void)setConsoleCursorBlink:(BOOL)consoleCursorBlink {
+    [self propertyWillChange];
     self.rootDict[kUTMConfigDisplayKey][kUTMConfigConsoleBlinkKey] = @(consoleCursorBlink);
 }
 
@@ -148,11 +168,21 @@ const NSString *const kUTMConfigConsoleResizeCommandKey = @"ConsoleResizeCommand
 }
 
 - (void)setConsoleResizeCommand:(NSString *)consoleResizeCommand {
+    [self propertyWillChange];
     self.rootDict[kUTMConfigDisplayKey][kUTMConfigConsoleResizeCommandKey] = consoleResizeCommand;
 }
 
 - (NSString *)consoleResizeCommand {
     return self.rootDict[kUTMConfigDisplayKey][kUTMConfigConsoleResizeCommandKey];
+}
+
+- (void)setDisplayCard:(NSString *)displayCard {
+    [self propertyWillChange];
+    self.rootDict[kUTMConfigDisplayKey][kUTMConfigDisplayCardKey] = displayCard;
+}
+
+- (NSString *)displayCard {
+    return self.rootDict[kUTMConfigDisplayKey][kUTMConfigDisplayCardKey];
 }
 
 @end

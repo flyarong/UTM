@@ -21,26 +21,38 @@ NS_ASSUME_NONNULL_BEGIN
 @interface UTMConfiguration (Constants)
 
 + (NSArray<NSString *>*)supportedOptions:(NSString *)key pretty:(BOOL)pretty;
-+ (NSArray<NSString *>*)supportedArchitecturesPretty;
-+ (NSArray<NSString *>*)supportedArchitectures;
 + (NSArray<NSString *>*)supportedBootDevicesPretty;
 + (NSArray<NSString *>*)supportedBootDevices;
 + (NSArray<NSString *>*)supportedImageTypesPretty;
 + (NSArray<NSString *>*)supportedImageTypes;
-+ (NSArray<NSString *>*)supportedSoundCardDevices;
-+ (NSArray<NSString *>*)supportedSoundCardDevicesPretty;
-+ (NSArray<NSString *>*)supportedTargetsForArchitecture:(NSString *)architecture;
-+ (NSArray<NSString *>*)supportedTargetsForArchitecturePretty:(NSString *)architecture;
-+ (NSInteger)defaultTargetIndexForArchitecture:(NSString *)architecture;
 + (NSArray<NSString *>*)supportedResolutions;
 + (NSArray<NSString *>*)supportedDriveInterfaces;
++ (NSArray<NSString *>*)supportedDriveInterfacesPretty;
 + (NSArray<NSString *>*)supportedScalersPretty;
 + (NSArray<NSString *>*)supportedScalers;
-+ (NSArray<NSString *>*)supportedConsoleThemes;
-+ (NSArray<NSString *>*)supportedConsoleFonts;
++ (NSArray<NSString *>*)supportedConsoleThemes API_AVAILABLE(ios(11));
++ (NSArray<NSString *>*)supportedConsoleFonts API_AVAILABLE(ios(11));
 + (NSString *)diskImagesDirectory;
-+ (NSString *)defaultDriveInterface;
 + (NSString *)debugLogName;
+
+@end
+
+@interface UTMConfiguration (ConstantsGenerated)
+
++ (NSArray<NSString *>*)supportedArchitectures;
++ (NSArray<NSString *>*)supportedArchitecturesPretty;
++ (nullable NSArray<NSString *>*)supportedCpusForArchitecture:(nullable NSString *)architecture;
++ (nullable NSArray<NSString *>*)supportedCpusForArchitecturePretty:(nullable NSString *)architecture;
++ (nullable NSArray<NSString *>*)supportedCpuFlagsForArchitecture:(nullable NSString *)architecture;
++ (nullable NSArray<NSString *>*)supportedTargetsForArchitecture:(nullable NSString *)architecture;
++ (nullable NSArray<NSString *>*)supportedTargetsForArchitecturePretty:(nullable NSString *)architecture;
++ (NSInteger)defaultTargetIndexForArchitecture:(nullable NSString *)architecture;
++ (nullable NSArray<NSString *>*)supportedDisplayCardsForArchitecture:(nullable NSString *)architecture;
++ (nullable NSArray<NSString *>*)supportedDisplayCardsForArchitecturePretty:(nullable NSString *)architecture;
++ (nullable NSArray<NSString *>*)supportedNetworkCardsForArchitecture:(nullable NSString *)architecture;
++ (nullable NSArray<NSString *>*)supportedNetworkCardsForArchitecturePretty:(nullable NSString *)architecture;
++ (nullable NSArray<NSString *>*)supportedSoundCardsForArchitecture:(nullable NSString *)architecture;
++ (nullable NSArray<NSString *>*)supportedSoundCardsForArchitecturePretty:(nullable NSString *)architecture;
 
 @end
 

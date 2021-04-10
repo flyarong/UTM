@@ -17,7 +17,6 @@
 #import "UTMLogging.h"
 #import "UTMTerminalIO.h"
 #import "UTMConfiguration.h"
-#import <UIKit/UIKit.h>
 
 @implementation UTMTerminalIO
 
@@ -30,6 +29,10 @@
     return self;
 }
 
+- (void)dealloc {
+    [self disconnect];
+}
+
 #pragma mark - UTMInputOutput
 
 - (BOOL)startWithError:(NSError *__autoreleasing  _Nullable * _Nullable)err {
@@ -37,7 +40,7 @@
     return [_terminal connectWithError: err];
 }
 
-- (void)connectWithCompletion: (void(^)(BOOL, NSError*)) block {
+- (void)connectWithCompletion: (void(^)(BOOL, NSString * _Nullable msg)) block {
     // there's no connection to be made, so just return YES
     block(YES, nil);
 }
@@ -46,7 +49,7 @@
     [_terminal disconnect];
 }
 
-- (UIImage *)screenshot {
+- (UTMScreenshot *)screenshot {
     // MAIN THREAD ONLY
 //    NSMutableParagraphStyle* paragraphStyle = [[NSMutableParagraphStyle defaultParagraphStyle] mutableCopy];
 //    paragraphStyle.alignment = NSTextAlignmentCenter;

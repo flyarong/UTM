@@ -16,15 +16,15 @@ UTM is a full featured virtual machine host for iOS. In short, it allows you to 
 * JIT based acceleration using qemu TCG
 * Frontend designed from scratch for iOS11+ using the latest and greatest APIs
 * Create, manage, run VMs directly from your device
-* No jailbreak required!
+* No jailbreak required for iOS 11-13! (required for iOS 14+)
 
 ## Install
 
-If you just want to use UTM, this is not the right place! Visit https://getutm.app/install/ for directions.
+If you just want to use UTM on iOS 11-13 or on jailbroken iOS 14, this is not the right place! Visit https://getutm.app/install/ for directions.
 
-## Building
+## Building (iOS)
 
-Make sure you have cloned with submodules `git submodule update --init --recursive`.
+To run UTM without a jailbreak on iOS 14 (as well as to develop UTM on any iOS version), [you must run with the Xcode debugger attached](Documentation/TetheredLaunch.md).
 
 ### Easy
 
@@ -35,16 +35,23 @@ The recommended way to obtain the dependencies is to use the built artifacts fro
 If you want to build the dependencies yourself, it is highly recommended that you start with a fresh macOS VM. This is because some of the dependencies attempt to use `/usr/local/lib` even though the architecture does not match. Certain installed libraries like `libusb` and `gawk` will break the build.
 
 1. Install Xcode command line and the following build prerequisites
-    `brew install bison pkg-config gettext glib libgpg-error nasm`
+    `brew install bison pkg-config gettext glib libgpg-error nasm make meson`
    Make sure to add `bison` to your `$PATH` environment!
 2. `git submodule update --init --recursive` if you haven't already
-3. Run `./scripts/build_dependencies.sh` to start the build. If building for the simulator, run `./scripts/build_dependencies.sh -a x86_64` instead.
+3. Run `./scripts/build_dependencies.sh` to start the build. If building for the simulator, run `./scripts/build_dependencies.sh -p ios -a x86_64` instead.
 4. Open `UTM.xcodeproj` and select your signing certificate
-5. Build and deploy from Xcode
+5. Select iOS as the target, build and deploy from Xcode
 
-## Signing
+## Building (macOS)
 
-If you build with Xcode, signing should be done automatically. iOS 13.3.1 is NOT supported due to a signing bug. You can use any version lower or higher than 13.3.1.
+Mostly the same as for iOS but with the following changes:
+
+* For building dependencies on Intel platforms, run `./scripts/build_dependencies.sh -p macos -a x86_64`
+* For building dependencies on Apple Silicon platforms, run `./scripts/build_dependencies.sh -p macos -a arm64`
+
+You may also download the prebuilt dependencies from Github instead.
+
+## Signing (iOS)
 
 ### Signing Release
 
@@ -59,7 +66,7 @@ In more technical detail, there are two kinds of signing certificates: "developm
 If you want to sign an `xcarchive` such as from a [Github Actions][1] built artifact, you can use the following command:
 
 ```
-./scripts/resign.sh UTM.xcarchive outputPath PROFILE_NAME TEAM_ID
+./scripts/package.sh signedipa UTM.xcarchive outputPath PROFILE_NAME TEAM_ID
 ```
 
 Where `PROFILE_NAME` is the name of the provisioning profile and `TEAM_ID` is the identifier next to the team name in the provisioning profile. Make sure the signing key is imported into your keychain and the provision profile is installed on your iOS device.
@@ -67,7 +74,7 @@ Where `PROFILE_NAME` is the name of the provisioning profile and `TEAM_ID` is th
 If you have a jailbroken device, you can also fake-sign it (with `ldid` installed):
 
 ```
-./scripts/resign.sh UTM.xcarchive outputPath
+./scripts/package.sh ipa UTM.xcarchive outputPath
 ```
 
 ## Why isn't this in the AppStore?
